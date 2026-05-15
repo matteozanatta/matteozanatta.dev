@@ -118,7 +118,6 @@ if (entries.length > 0) {
 
         {
             (siteConfig.socials.github ||
-                siteConfig.socials.twitter ||
                 siteConfig.socials.linkedin) && (
                 <div class="flex items-center gap-4">
                     {siteConfig.socials.github && (
@@ -130,17 +129,6 @@ if (entries.length > 0) {
                             class="text-muted-foreground hover:text-primary transition-colors"
                         >
                             <Github size={20} />
-                        </a>
-                    )}
-                    {siteConfig.socials.twitter && (
-                        <a
-                            href={siteConfig.socials.twitter}
-                            target="_blank"
-                            rel="noreferrer"
-                            aria-label="Twitter"
-                            class="text-muted-foreground hover:text-primary transition-colors"
-                        >
-                            <Twitter size={20} />
                         </a>
                     )}
                     {siteConfig.socials.linkedin && (
