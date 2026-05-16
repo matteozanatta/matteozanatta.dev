@@ -1,12 +1,12 @@
 import type { SiteConfig } from './types';
 
 export const siteConfig: SiteConfig = {
-  title: "Matteo's blog",
+  title: "Matteo Zanatta's blog",
   description: 'Notes, thoughts and reflections on my software engineering journey.',
   siteUrl: 'https://matteozanatta.dev',
   author: {
     name: 'Matteo Zanatta',
-    bio: "Somewhere between a junior and someone who knows what they're doing..",
+    bio: 'Back-end GIS software engineer, always ready to learn and find elegant solutions to complex problems.',
   },
   nav: [
     { label: 'Writing', href: '/' },
@@ -25,7 +25,7 @@ export const siteConfig: SiteConfig = {
     },
   },
   rss: {
-    title: "Matteo's Blog",
+    title: "Matteo Zanattas's Blog",
     description: 'Notes, thoughts and reflections on my software engineering journey.',
   },
 };
