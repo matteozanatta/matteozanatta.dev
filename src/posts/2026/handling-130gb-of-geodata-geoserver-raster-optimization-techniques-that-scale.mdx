@@ -1,0 +1,203 @@
+---
+title: 'Handling 200GB of geodata: GeoServer raster optimization techniques that scale'
+date: '05/15/2026'
+updatedDate: ''
+frontmatter: 'Reflections about raster data optimizations that save your production environment'
+tags: ['geoserver', 'gis', 'data']
+draft: false
+image: '../../assets/images/geoserver.webp'
+---
+
+Earlier this year, we received an unusual request.
+We were asked to add new resources to our client's GeoServer system.
+
+Ordinary stuff, right?
+
+Part of my job consists of receiving raster data from multiple sources, optimizing it for GeoServer rendering, and making sure the architecture is scalable so the system is always working as expected (well, always is a huge word :) ).
+So, we just framed it as "something that should be treated as usual".
+
+### A quick reality check
+
+Let me tell you I was quite surprised when I clicked on the Google Drive folder link containing all the tiles (in GeoTIFF format) that formed the actual raster layer.
+
+There were so many files that even scrolling to the bottom of the directory on the browser was difficult!
+By the time I skimmed through almost half of the total objects in the folder, the browser page started lagging and suddenly crashed.
+I tried the exact same procedure two or three times before moving forward and just downloading the whole folder locally.
+
+Ehm what? 200GBs of raster data?
+
+How were we supposed to handle that?
+I mean, we were used to vector and raster data that weighed from a bunch of MBs to a couple of GBs.
+This one, however, was a completely different beast with more than 2500 tiles.
+And it was not the only problem.
+
+This new geoserver layer was about raster datasources.
+Contrary to vector datasources, which usually involve a PostGIS database that can be optimized thanks to GIST indexes (and was quite comfortable with it),
+raster datasources are a bit more delicate because of optimization transformations that have to take place.
+And compression was the only way to optimize raster data right?
+
+### Exploring solutions: a top down approach
+
+Before starting any actual data manipulation, I wanted to understand how to actually reduce GeoTIFF file sizes and optimize loading from GeoServer instances.
+I approached the problem from the top: what are the supported raster data store types that GeoServer is handling natively? Here are a few:
+
+- ArcGrid – ARC/INFO ASCII GRID Coverage Format
+- GeoTIFF – Tagged Image File Format with Geographic information
+- Gtopo30 – Gtopo30 Coverage Format
+- ImageMosaic – Image mosaicking plugin
+- ImagePyramid – Image pyramidal plugin
+- WorldImage
+
+In our case, there were three main candidates, considering that the unprocessed data we were given was in GeoTIFF format:
+
+1. creating a **single GeoTIFF**. Generating a virtual mosaic of all the tiles and subsequently rendering a single, overall GeoTIFF file.
+   This almost instantly turned out to be problematic for many reasons:
+
+- since we were trying to put together more than 2,500 GeoTIFF tiles, how long would that data processing have taken?
+- the resulting file would have been massive (surely more than 50–60GB, even with GDAL library optimizations), and GeoServer could not have tolerated such a huge file.
+  As a matter of fact, we were working with GeoServer instances that only had a 4GB max Java heap size.
+  So, this path was basically discarded from the start.
+
+2. keeping everything as it was and using the **ImageMosaic plugin**.
+   This plugin is really smart because whenever a WMS request comes in with bounding box as a parameter, GeoServer loads into RAM only the specific tiles required to render the image.
+   It was created to solve the exact problem we were facing, so we thought it was a solid option worth a try.
+3. using the **ImagePyramid plugin**.
+   This works similarly to the ImageMosaic plugin, but it requires preprocessing data into a series of nested folders using the gdal_retile command from the GDAL library.
+   Again, this was problematic on our side: how long would that transformation process have taken?
+
+Considering we were on a very strict time constraint and didn't want to spend days processing all the tiles, we chose the second path.
+We basically let the ImageMosaic plugin figure out which tiles to load at runtime according to the specific WMS request (and bounding box param) received.
+
+After trying different configurations, we hit an even more challenging problem: OOM exceptions were not always thrown.
+In fact, the problems only happened when WMS requests were made at a low zoom level (zoomed all the way out).
+
+The reason was that the low zoom level triggered the ImageMosaic plugin to load all 2,500 individual GeoTIFF tiles simultaneously to render the massive geographic extent.
+
+In our case, the frontend map component was always loading the layer at its lowest zoom level by default.
+In other words, we were accidentally telling GeoServer to ALWAYS load ALL the tiles associated with that layer on page load.
+Since this low zoom overview was a rigid user requirement on the front end component we couldn't change, we knew we had to focus our engineering energies on finding a backend solution inside GeoServer.
+
+If we optimized every single GeoTIFF that was part of the raster layer by reducing its individual file size, we could theoretically load them all into memory and avoid OOM issues, right?
+
+### Upgrading to Cloud Optimized GeoTIFFs (COGs)
+
+Well, this is how we discovered COG (Cloud Optimized GeoTIFF). COGs are like GeoTIFFs with superpowers. Let's see briefly why:
+
+- every single GeoTIFF can be optimized and transformed into a COG thanks to the GDAL library, and there are basically no constraints regarding file sizes.
+- COG tiles are compressed, saving a ton of space compared to standard GeoTIFF files.
+  The processing algorithm is highly customizable in format (e.g., JPEG or WebP) and quality percentage (e.g., 70% or 85%).
+- COG tiles have overviews incorporated directly inside them.
+  Overviews are like downsampled, cached images of the original tile that weigh basically nothing.
+  They help GeoServer speed up content retrieval at different zoom scales.
+
+Moreover, the GDAL library provides a specific command to apply this optimization to GeoTIFFs.
+This was amazing because it meant we could automate the file transformation process with a script instead of doing it manually.
+Here is an example of the command we used:
+
+```bash
+gdal_translate input.tif output_cog.tif \
+  -of COG \
+  -co COMPRESS=JPEG \
+  -co QUALITY=85 \
+  -co BLOCKSIZE=512 \
+  -co RESAMPLING=BILINEAR \
+  -co OVERVIEW_RESAMPLING=BILINEAR
+```
+
+\
+At this point, the challenge was just managing the raw batch data processing and transformation of all 2,500+ tiles into COGs.
+But we realized it was the only walkable path, so we went with it!
+
+As before, we prepared a small test set of COGs to see if the idea held up. \
+Aaaaaand... it worked! We were now able to let GeoServer load way more tiles at the same time because of a 50% average reduction in file size.
+
+We then proceeded to test the entire dataset in our staging environment.
+While the loading time wasn't blazing fast, it was acceptable and, most importantly, the whole system worked!
+Consider that we were loading 120GB of compressed data onto a single GeoServer instance with a 4GB heap size.
+It was a massive success! So we proceeded to deploy the configuration to production.
+
+### Surprises on the production environment
+
+We also configured the production environment to accept the new ImageMosaic datastore and published the layer.
+Then, we hit the map component on the frontend to trigger the WMS call.
+
+We waited, and waited, and waited for like 1 to 2 minutes... and nothing loaded on the screen.
+
+We immediately checked the system health metrics and found out that the specific GeoServer instance we were calling was completely down. \
+WHAT? How could that happen?
+It worked perfectly in our staging environment!
+
+Well, we left one crucial variable out of the equation: live production environment traffic and concurrent load.
+GeoServer was trying to read and process this incredibly heavy layer on top of handling hundreds of other layers normally requested by other applications and active users.
+Adding to that, it was a particularly high traffic day.
+
+Holy crap, we needed to sort things out and find a solution quickly to fix the production outage.
+
+### A hybrid approach based on scaling
+
+We needed to figure out if we were missing an entirely different layer of optimization.
+
+I stopped looking at the problem purely from a file compression standpoint and asked myself:
+considering we already applied compression to every single tile via COGs, and we can't compress them further without hitting destructive data loss, is there anything else?
+
+It turns out there was.
+Instead of forcing GeoServer to index and evaluate all 2,500 COG tiles at a low zoom level (zoomed out), why couldn't we serve a lightweight "overview" layer first, and then dynamically swap to the heavy group of COGs as the user zooms in?
+
+Besides the obvious advantage of lowering GeoServer memory pressure, this approach offered massive pros:
+
+- if the overview layer is a single, pre rendered, COG optimized tile covering the full extent, loading it at low zoom levels through WMS will be blazing fast;
+- we still get to leverage the efficiency of the ImageMosaic plugin at high zoom levels (zoomed in).
+  And because the bounding box is small when zoomed in close, the plugin only has to load 2 or 3 local tiles;
+- the server only ever load just a bunch of tiles to answer each WMS request.
+  This is optimization at its finest.
+
+So, we created our overview layer by generating a virtual mosaic and downsampling it.
+We even ran some tests (10k x 10k, 5k x 5k) and found the performance sweet spot for a single flattened COG was at 15,000x15,000 pixels.
+The resulting file was around 150MB, but because of internal COG overview optimizations image loading was nearly instantaneous.
+We created a standard GeoTIFF data store for it and loaded our new overview.
+
+### Masking complexity
+
+The only thing we were missing was how to glue these two layers together cleanly.
+After digging through the documentation, we decided to create a new Layer Group on GeoServer and assign both layers to it.
+
+This was done to completely mask our overview/detail routing logic inside GeoServer.
+To the outside world, frontend clients and map components believe they are interacting with a single, standard layer.
+They make WMS requests to one uniform layer name, without knowing any magic trick we made under the hood!
+
+Also, by decoupling client access from the internal implementation, we are completely free to implement further optimizations in the future without breaking frontend code.
+
+I see close similarities here with classic software design principles like the Facade Pattern.
+The consumer components are bound strictly to a conceptual interface (the public layer name) rather than the concrete implementation details (layer groups, overview layers, detail layers, or SLD files).
+As always, fundamental software engineering concepts overlap :) !
+
+To tie it all together, we applied a MinScaleDenominator style rule to the overview layer and a MaxScaleDenominator rule to the detail layer inside the group configuration.
+This handles the scale dependent sorting automatically based on the map's current zoom threshold.
+
+### The cherry on top
+
+At this stage, the architecture was stable and the result was acceptable.
+We were satisfying WMS requests within 500ms, and memory pressure on our 4GB heap stayed perfectly flat.
+
+Since this specific asset serves as a primary baselayer requested concurrently by multiple users, we decided to add an extra layer of robustness: GeoWebCache (GWC).
+By activating tile caching directly on the Layer Group, we sliced an additional 150ms off request times.
+
+We went from a crashing, unoptimized production instance that couldn't handle a raw 200GB folder delivery to a super fast, cached deployment serving map tiles in 350ms average.
+
+### TL;DR
+
+**Problem** \
+Attempting to serve a 200GB raster dataset (around 2500 standard GeoTIFF tiles) via GeoServer's ImageMosaic plugin caused fatal Java Heap Space Out of Memory (OOM) crashes under production traffic.
+This happened because zoomed out web map clients forced GeoServer to load all 2500 tiles simultaneously.
+
+**First optimization** \
+Converted all raw GeoTIFFs into Cloud-Optimized GeoTIFFs (COGs) using GDAL compression (COMPRESS=JPEG QUALITY=85).
+This slashed total disk storage by 40% (down to 120GB) and enabled efficient internal overview lookups.
+
+**Final optimization** \
+Implemented a scale dependent rendering by splitting tiles into two layers:
+
+- low zoom: serves a single and pre rendered 150MB overview COG (15,000x15,000 pixels).
+- high zoom: swaps to the original 2500 tiles layer ImageMosaic, loading only 2 or 3 tiny tiles per request according to the client's localized bounding box.
+
+Finally, encapsulated both layers inside a single GeoServer Layer Group governed by MinScaleDenominator and MaxScaleDenominator SLD style rules.

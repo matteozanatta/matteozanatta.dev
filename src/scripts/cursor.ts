@@ -8,7 +8,7 @@ let isLoopRunning = false;
 let isCursorEnabled = true;
 
 const HALF_OF_CURSOR = 6;
-const LERP_FACTOR = 0.15;
+const LERP_FACTOR = 0.4;
 
 function updateCursor() {
   if (isCursorEnabled) {
@@ -26,58 +26,55 @@ let onMouseOver: ((e: MouseEvent) => void) | null = null;
 let onCursorToggleClick: ((e: MouseEvent) => void) | null = null;
 
 // cleanup
-document.addEventListener("astro:before-swap", () => {
+document.addEventListener('astro:before-swap', () => {
   if (onMouseMove) {
-    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener('mousemove', onMouseMove);
     onMouseMove = null;
   }
   if (onMouseOver) {
-    document.removeEventListener("mouseover", onMouseOver);
+    document.removeEventListener('mouseover', onMouseOver);
     onMouseOver = null;
   }
   if (onCursorToggleClick) {
-    const toggleBtn = document.getElementById("cursor-toggle");
-    if (toggleBtn) toggleBtn.removeEventListener("click", onCursorToggleClick);
+    const toggleBtn = document.getElementById('cursor-toggle');
+    if (toggleBtn) toggleBtn.removeEventListener('click', onCursorToggleClick);
     onCursorToggleClick = null;
   }
 });
 
 function getCursorPreference(): boolean {
   try {
-    if (
-      typeof localStorage !== "undefined" &&
-      localStorage.getItem("cursor-disabled") === "true"
-    ) {
-      return false; 
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('cursor-disabled') === 'false') {
+      return true;
     }
   } catch (_) {}
-  return true; 
+  return false;
 }
 
 function setCursorPreference(enabled: boolean) {
   try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem("cursor-disabled", enabled ? "false" : "true");
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('cursor-disabled', enabled ? 'false' : 'true');
     }
   } catch (_) {}
 }
 
-document.addEventListener("astro:page-load", () => {
-  const isDesktop = matchMedia("(pointer: fine)").matches;
+document.addEventListener('astro:page-load', () => {
+  const isDesktop = matchMedia('(pointer: fine)').matches;
   if (!isDesktop) return;
 
   isCursorEnabled = getCursorPreference();
-  cursor = document.getElementById("cursor");
+  cursor = document.getElementById('cursor');
 
-  const toggleBtn = document.getElementById("cursor-toggle");
+  const toggleBtn = document.getElementById('cursor-toggle');
   if (toggleBtn) {
-    toggleBtn.classList.remove("hidden");
-    
+    toggleBtn.classList.remove('hidden');
+
     const updateIconState = () => {
       if (isCursorEnabled) {
-        toggleBtn.classList.remove("opacity-50");
+        toggleBtn.classList.remove('opacity-50');
       } else {
-        toggleBtn.classList.add("opacity-50");
+        toggleBtn.classList.add('opacity-50');
       }
     };
 
@@ -89,19 +86,19 @@ document.addEventListener("astro:page-load", () => {
       updateIconState();
 
       if (isCursorEnabled) {
-        document.documentElement.classList.add("has-custom-cursor");
+        document.documentElement.classList.add('has-custom-cursor');
       } else {
-        document.documentElement.classList.remove("has-custom-cursor");
-        if (cursor) cursor.style.opacity = "0";
+        document.documentElement.classList.remove('has-custom-cursor');
+        if (cursor) cursor.style.opacity = '0';
       }
     };
-    toggleBtn.addEventListener("click", onCursorToggleClick);
+    toggleBtn.addEventListener('click', onCursorToggleClick);
   }
 
   if (isCursorEnabled) {
-    document.documentElement.classList.add("has-custom-cursor");
+    document.documentElement.classList.add('has-custom-cursor');
   } else {
-    document.documentElement.classList.remove("has-custom-cursor");
+    document.documentElement.classList.remove('has-custom-cursor');
   }
 
   if (!isLoopRunning) {
@@ -113,20 +110,20 @@ document.addEventListener("astro:page-load", () => {
     if (!isCursorEnabled) return;
     targetX = e.clientX - HALF_OF_CURSOR;
     targetY = e.clientY - HALF_OF_CURSOR;
-    if (cursor && cursor.style.opacity !== "1") {
-      cursor.style.opacity = "1";
+    if (cursor && cursor.style.opacity !== '1') {
+      cursor.style.opacity = '1';
     }
   };
 
   onMouseOver = (e) => {
     if (!isCursorEnabled) return;
-    if (e.target instanceof Element && e.target.closest("a, button")) {
+    if (e.target instanceof Element && e.target.closest('a, button')) {
       scale = 1.8;
     } else {
       scale = 1;
     }
   };
 
-  window.addEventListener("mousemove", onMouseMove);
-  document.addEventListener("mouseover", onMouseOver);
+  window.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseover', onMouseOver);
 });
